@@ -214,7 +214,7 @@ SCOPES = [
 
 This grants full Google Drive access.
 
-For limited access, consider:
+For limited access, consider: line 18 in SyncR.py
 
 ```python
 https://www.googleapis.com/auth/drive.file
