@@ -22,8 +22,23 @@ drive_url = sys.argv[1]
 local_path = sys.argv[2]
 
 class DriveSyncR:
-    def __init__(self):
-        pass
+    def __init__(self, drive_url, local_path):
+        self.TOTAL_FILES = 0
+        self.UPLOADED_FILES = 0
+        self.UNCHANGED_FILES = 0
+        self.UPDATED_FILES = 0
+        self.FILE_COUNTER = 1
+        # LOCAL SETUP 
+        self.local_files_dict: dict[str, dict[str, str | int]] = {}
+
+        self.drive_url = drive_url
+        self.local_path = local_path
+
+        self.local_root_folder = local_path.split("\\")[-1]
+
+        self.drive_files_dict = {}
+        self.drive_folder_dict = {}
+
 
     def get_local_md5(self, file_path):
         """create hash of the local file to decide whether to update the file in drive"""
@@ -97,16 +112,16 @@ class DriveSyncR:
                 )
 
                 if item["mimeType"] == FOLDER_MIME:
-                    drive_folder_dict[current_path] = item["id"]
+                    self.drive_folder_dict[current_path] = item["id"]
 
-                    walk_drive(
+                    self.walk_drive(
                         service,
                         item["id"],
                         current_path
                     )
                 else:
                     # drive_files_dict[current_path] = item["id"]
-                    drive_files_dict[current_path] = {
+                    self.drive_files_dict[current_path] = {
                         "id": item["id"],
                         "md5": item.get("md5Checksum")
                     }
@@ -151,30 +166,29 @@ class DriveSyncR:
 
     def sync_file(self,service,relative_path, local_info):
         """Depending on the state either upload the local file, update the local to drive or keep it unchanged"""
-        global UNCHANGED_FILES, UPDATED_FILES, UPLOADED_FILES, FILE_COUNTER
-        if relative_path in drive_files_dict:
+        if relative_path in self.drive_files_dict:
 
-            drive_info = drive_files_dict[relative_path]
+            drive_info = self.drive_files_dict[relative_path]
 
-            local_md5 = get_local_md5(local_info["path"])
+            local_md5 = self.get_local_md5(local_info["path"])
 
             if local_md5 != drive_info["md5"]:
-                print(f"{FILE_COUNTER}) Updating: {relative_path} \tSize: {local_info['size']}")
-                UPDATED_FILES += 1
-                FILE_COUNTER += 1
+                print(f"{self.FILE_COUNTER}) Updating: {relative_path} \tSize: {local_info['size']}")
+                self.UPDATED_FILES += 1
+                self.FILE_COUNTER += 1
 
-                update_file( service, drive_info["id"], local_info["path"])
+                self.update_file( service, drive_info["id"], local_info["path"])
             else:
-                print(f"{FILE_COUNTER}) Unchanged: {relative_path} \tSize: {local_info['size']}")
-                UNCHANGED_FILES += 1
-                FILE_COUNTER += 1
+                print(f"{self.FILE_COUNTER}) Unchanged: {relative_path} \tSize: {local_info['size']}")
+                self.UNCHANGED_FILES += 1
+                self.FILE_COUNTER += 1
         else:
-            print(f"{FILE_COUNTER}) Uploading: {relative_path} \tSize: {local_info['size']}")
+            print(f"{self.FILE_COUNTER}) Uploading: {relative_path} \tSize: {local_info['size']}")
             parent_path = os.path.dirname(relative_path)
-            parent_id = ensure_drive_folder( service, parent_path )
-            upload_file( service, local_info["path"], parent_id )
-            UPLOADED_FILES += 1
-            FILE_COUNTER += 1
+            parent_id = self.ensure_drive_folder( service, parent_path )
+            self.upload_file( service, local_info["path"], parent_id )
+            self.UPLOADED_FILES += 1
+            self.FILE_COUNTER += 1
 
     def create_drive_folder(self, service, folder_name, parent_id ):
         """create the folder in drive if it exists in local directory but not in drive"""
@@ -199,36 +213,27 @@ class DriveSyncR:
 
     def ensure_drive_folder(self, service, folder_path ):
         """returns the folder id for the folder in drive"""
-        if folder_path in drive_folder_dict:
-            return drive_folder_dict[folder_path]
+        if folder_path in self.drive_folder_dict:
+            return self.drive_folder_dict[folder_path]
 
         parent_path = os.path.dirname(folder_path)
         folder_name = os.path.basename(folder_path)
 
-        parent_id = ensure_drive_folder(
+        parent_id = self.ensure_drive_folder(
             service,
             parent_path
         )
 
-        folder_id = create_drive_folder( service, folder_name, parent_id )
+        folder_id = self.create_drive_folder( service, folder_name, parent_id )
 
-        drive_folder_dict[folder_path] = folder_id
+        self.drive_folder_dict[folder_path] = folder_id
 
         return folder_id
 
-if __name__ == "__main__":
-    TOTAL_FILES = 0
-    UPLOADED_FILES = 0
-    UNCHANGED_FILES = 0
-    UPDATED_FILES = 0
-    FILE_COUNTER = 1
-    # LOCAL SETUP 
-    local_files_dict: dict[str, dict[str, str | int]] = {}
-    
+if __name__ == "__main__":   
+    syncr = DriveSyncR(drive_url=sys.argv[1], local_path = sys.argv[2])
 
-    local_root_folder = local_path.split("\\")[-1]
-
-    for dirpath, dirnames, filenames in os.walk(local_path, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(syncr.local_path, followlinks=False):
         for filename in filenames:
             relative = os.path.relpath(
                 os.path.join(dirpath, filename),
@@ -240,24 +245,23 @@ if __name__ == "__main__":
                 filename
             )
 
-            local_files_dict[relative] = {
+            syncr.local_files_dict[relative] = {
                 "path": os.path.join( dirpath, filename ),
                 "size": f"{os.path.getsize(file_path)/(1024*1024):.2f} MB" 
             } 
 
-    TOTAL_FILES = len(local_files_dict)
+    TOTAL_FILES = len(syncr.local_files_dict)
     # DRIVE SETUP
     # Create Drive service
     print("-----------------------------------------------------------------")
     print(f"TOTAL FILES: {TOTAL_FILES}")
     print("-----------------------------------------------------------------")
-    drive_files_dict = {}
-    drive_folder_dict = {}
-    service = get_drive_service()
+
+    service = syncr.get_drive_service()
 
 
 
-    folder_id = extract_folder_id(drive_url)
+    folder_id = syncr.extract_folder_id(drive_url)
 
     folder = service.files().get(
         fileId=folder_id,
@@ -265,25 +269,25 @@ if __name__ == "__main__":
     ).execute()
 
     drive_root = folder["name"]
-    drive_folder_dict[drive_root] = folder_id
+    syncr.drive_folder_dict[drive_root] = folder_id
 
-    if local_root_folder != drive_root:
+    if syncr.local_root_folder != drive_root:
         raise ValueError(
             "Local root folder and Drive root folder names must match"
         )
 
-    walk_drive(
+    syncr.walk_drive(
         service,
         folder_id,
         drive_root
     )
 
-    for relative_path, local_info in local_files_dict.items():
-        sync_file( service, relative_path, local_info )
+    for relative_path, local_info in syncr.local_files_dict.items():
+        syncr.sync_file( service, relative_path, local_info )
 
     # global TOTAL_FILES, UNCHANGED_FILES, UPDATED_FILES, UPLOADED_FILES
     print("\n\n")
-    print(f"TOTAL FILES:\t{TOTAL_FILES}")
-    print(f"UNCHANGED:\t{UNCHANGED_FILES}")
-    print(f"UPDATED:\t{UPDATED_FILES}")
-    print(f"UPLOADED:\t{UPLOADED_FILES}")
+    print(f"TOTAL FILES:\t{syncr.TOTAL_FILES}")
+    print(f"UNCHANGED:\t{syncr.UNCHANGED_FILES}")
+    print(f"UPDATED:\t{syncr.UPDATED_FILES}")
+    print(f"UPLOADED:\t{syncr.UPLOADED_FILES}")
